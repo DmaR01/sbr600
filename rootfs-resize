@@ -1,0 +1,95 @@
+#!/usr/bin/python
+import re
+import parted
+import glob
+import os
+import ast
+import sys
+import psutil
+
+abort_blocked = False;
+
+# Check the kernel command line parameter 'nofsresize' was NOT specified
+for line in open('/proc/cmdline'):
+	if 'nofsresize' in line:
+		abort_blocked = True
+
+# Check that /.nofsresize is NOT present
+if os.path.isfile('/.nofsresize'):
+	abort_blocked = True
+
+# Abort due to either of the above
+if abort_blocked:
+	sys.exit(1)
+
+
+# PHASE 1
+def extendedResize():
+	root_device = '/dev/sdc5'
+	disk_device = '/dev/sdc'
+	extended = '/dev/sdc2'
+	device = parted.Device(disk_device)
+	disk = parted.Disk(device)	
+	root = disk.getPartitionByPath(root_device)
+	extended = disk.getPartitionByPath(extended)
+	constraint = device.optimalAlignedConstraint
+	try:
+		new_end = extended.getMaxGeometry(constraint).end
+	except TypeError:
+		new_end = extended.getMaxGeometry	(constraint.getPedConstraint()).end
+	
+	disk.setPartitionGeometry(partition = extended, constraint = 	constraint, start = extended.geometry.start, end = new_end)
+	try:
+		disk.commit()
+	except:
+		pass
+
+	# change flagfile and reboot
+	# open('/.rootfs-resize', 'w').close()
+	# os.unlink('/.rootfs-repartition')
+	# os.system('/sbin/reboot')
+
+extendedResize()
+
+def logicalResize():
+	root_device = '/dev/sdc5'
+	disk_device = '/dev/sdc'
+	device = parted.Device(disk_device)
+	disk = parted.Disk(device)
+	root = disk.getPartitionByPath(root_device)
+	constraint = device.optimalAlignedConstraint
+	try:
+		new_end = root.getMaxGeometry(constraint).end
+	except TypeError:
+		new_end = root.getMaxGeometry(constraint.getPedConstraint()).end
+	
+	disk.setPartitionGeometry(partition = root, constraint = constraint, start = root.geometry.start, end = new_end)
+
+	try:
+		disk.commit()
+	except:
+		pass
+
+	# change flag files and reboot
+	# open('/.rootfs-resize', 'w').close()
+	# os.unlink('/.rootfs-repartition')
+	# os.system('/sbin/reboot')
+
+logicalResize()	
+
+# PHASE 2
+# if /.rootfs-resize exists, resize the filesystem
+def fileSystemResize():
+	# elif os.path.isfile('/.rootfs-resize'):
+	# use ionice if available
+	root_device = '/dev/sdc5'
+	
+	if os.path.isfile('/usr/bin/ionice'):
+		os.system('/usr/bin/ionice -c2 -n7 /sbin/resize2fs %s' % root_device)
+	else:
+		os.system('/sbin/resize2fs %s' % root_device)
+
+	
+fileSystemResize()
+
+	
