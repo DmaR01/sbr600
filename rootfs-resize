@@ -26,12 +26,10 @@ if abort_blocked:
 # PHASE 1
 # Resize extended partition to full capacity
 def extendedResize():
-	root_device = '/dev/sdc5'
-	disk_device = '/dev/sdc'
-	extended = '/dev/sdc2'
+	disk_device = '/dev/sdc' # testing purposes
+	extended = '/dev/sdc2' # testing purposes
 	device = parted.Device(disk_device)
 	disk = parted.Disk(device)	
-	root = disk.getPartitionByPath(root_device)
 	extended = disk.getPartitionByPath(extended)
 	constraint = device.optimalAlignedConstraint
 	try:
