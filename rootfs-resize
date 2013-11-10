@@ -1,4 +1,82 @@
 #!/usr/bin/python
+#
+# rootfs-resize :: Resize the root/extended partition, and filesystem.
+#
+# Version 2.1 2013-10-10
+#
+# Authors:
+# Chris Tyler, Seneca College 2013-01-11
+# Daniel Martino, Seneca College 2013-10-10
+#
+# Version 2.0 2013-01-11
+# This script will increase the size of the root partition by
+# moving the end of the partition, and then resize the filesystem
+# to fill the available space.
+#
+# Version 2.1 2013-10-10
+# This version now supports the resizing of extended/logical
+# partitions by moving the end of partition, and then resizing
+# the filesystem to fill the available space.
+#
+# Prerequisites for successful operation:
+# 1. The root filesystem must be on a partition (not an LV or other
+# abstraction) on a /dev/sdX or /dev/mmcblkX device.
+#
+# 2. The root filesystem type must be ext2, ext3, or ext4.
+#
+# 3. There must be room available to increase the size of the
+# root partition by moving the end. The start of the root partition
+# will not be moved.
+#
+# 4. The file /.nofsresize must not exist.
+#
+# 5. The kernel must not have been booted with the 'nofsresize'
+# command-line option.
+#
+# 6. The file /.rootfs-repartition must exist to start phase 1
+# (partition adjustment). The system will be rebooted immediately
+# if the partition adjustment is successful.
+#
+# 7. The file /.rootfs-resize, which is created when the partitions
+# are adjusted in phase 1, must exist to start phase 2.
+#
+# 8. If the file /.swapsize exists when phase 2 is processed,
+# and it contains a text representation of a non-zero whole number,
+# and the file /swap0 does not exist, then a swapfile named /swap0
+# will be created. The size of the swapfile will be the number in
+# /.swapsize interpreted as megabytes. This swapfile will be added to
+# /etc/fstab and activated.
+#
+# Requirements (Fedora package name as of F17):
+# - python 2.7+ (python)
+# - pyparted (pyparted)
+# - psutil (python-psutil)
+# - /sbin/resize2fs (e2fsprogs)
+# - /sbin/mkswap (util-linux)
+#
+# Optional requirements (recommended):
+# - /usr/bin/ionice (util-linux)
+# - /sbin/swapon (util-linux)
+
+# Copyright (C)2013 Chris Tyler, Seneca College, and others
+# (see Authors, above).
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+# MA 02110-1301 USA
+#
+
 import re
 import parted
 import glob
@@ -22,6 +100,7 @@ if os.path.isfile('/.nofsresize'):
 if abort_blocked:
 	sys.exit(1)
 
+# Find the root device
 for line in open("/proc/self/mountinfo"):
 	checkr = re.search("/dev/sdb[1-4]", line)
 	if checkr:
@@ -31,6 +110,7 @@ for line in open("/proc/self/mountinfo"):
 rmajor=int(r_major_minor.split(":")[0])
 rminor=int(r_major_minor.split(":")[1])
 
+# Find logical device
 for line in open("/proc/self/mountinfo"):
 	checkl = re.search("/dev/sdb[5-9]", line)
 	if checkl:
@@ -40,10 +120,12 @@ for line in open("/proc/self/mountinfo"):
 lmajor = int(logical_major_minor.split(":")[0])
 lminor = int(logical_major_minor.split(":")[1])
 
-
+# We now have the major/minor of both the root and 
+# logical device. Scan devices to find the corresponding
+# block device. This is necessary because the device name
+# reported in /proc/self/mountinfo may be /dev/root
 root_device = ''
 logical_device = ''
-
 for rootdev in glob.glob("/dev/sdb[1-4]*")+glob.glob("/dev/mmcblk*p[1-4]*"):
 	rdev=os.stat(rootdev).st_rdev
 	if os.major(rdev) == rmajor and os.minor(rdev) == rminor:
@@ -60,6 +142,8 @@ for rootdev in glob.glob("/dev/sdb[1-4]*")+glob.glob("/dev/mmcblk*p[1-4]*"):
 				logical_device = ''
 				break
 
+
+# If the root device is a partition, find the disk containing it
 disk_device = ''
 for pattern in [ '/dev/sdb', '/dev/mmcblk.' ]:
 	match = re.match(pattern, root_device)
@@ -76,7 +160,6 @@ if not disk_device:
 # PHASE 1
 # Resize extended partition to full capacity
 def extendedResize():
-	#disk_device = '/dev/sdb' # testing purposes
 	extended = '/dev/sdb2' # testing purposes
 	device = parted.Device(disk_device)
 	disk = parted.Disk(device)	
@@ -100,8 +183,6 @@ def extendedResize():
 
 # Resize the logical partition to full capacity
 def logicalResize():
-	#root_device = '/dev/sdb5'
-	#disk_device = '/dev/sdb'
 	device = parted.Device(disk_device)
 	disk = parted.Disk(device)
 	root = disk.getPartitionByPath(root_device)
@@ -139,8 +220,59 @@ def fileSystemResize():
 		os.system('/usr/bin/ionice -c2 -n7 /sbin/resize2fs %s' % root_device)
 	else:
 		os.system('/sbin/resize2fs %s' % root_device)
-
 	
+	'''
+	# Create swap is requested
+	if os.path.isfile('/.swapsize'):
+			swapsizefile = open('/.swapsize')
+			try:
+				swapsize = ast_literal_eval(swapsizefile.readline())
+			except:
+				swapsize = 0
+
+			swapsizefile.close()
+
+			# Create /swap0 as a swapfile if it doesn't exist
+			# and the requested size in MB is greater than 0
+			if (not os.path.isfile('/swap0') ) and swapsize > 0:
+
+			# Lower the I/O priority to minimum best-effort
+			psutil.Process(os.getpid()).set_ionice(psutil.IOPRIO_CLASS_BE, 7)
+
+			# Create swap file as swap0.part (so we recreate if aborted)
+			MB = ' ' * (1024*1024)
+			swapfile = open('/swap0.part', 'w')
+			for X in range(swapsize):
+					swapfile.write(MB)
+
+			# Make it a swapfile
+			os.system('/sbin/mkswap /swap0.part')
+
+			# Rename the swapfile to /swap0
+			os.rename('/swap0.part', '/swap0')
+
+		# Add /swap0 to the fstab if not already present
+		abort_fstab = False
+		for line in open("/etc/fstab"):
+				if re.match("/swap0", line):
+						abort_fstab = True
+						break
+		if not abort_fstab:
+				fstab = open("/etc/fstab", "a")
+				fstab.write("/swap0\t\tswap\tswap\n")
+				fstab.close()
+
+		# Active all swap spaces if possible
+		if os.path.isfile("/sbin/swapon"):
+				os.system("/sbin/swapon -a")
+
+		# Delete swap flagfile
+		os.unlink("/.swapsize")
+	
+	# Delete resize flagfile
+	os.unlink("/.rootfs-resize")
+'''
+
 extendedResize()
 logicalResize()
 fileSystemResize()
