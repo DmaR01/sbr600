@@ -11,23 +11,73 @@ abort_blocked = False;
 
 # Check the kernel command line parameter 'nofsresize' was NOT specified
 for line in open('/proc/cmdline'):
-    if 'nofsresize' in line:
-        abort_blocked = True
+	if 'nofsresize' in line:
+		abort_blocked = True
 
 # Check that /.nofsresize is NOT present
 if os.path.isfile('/.nofsresize'):
-    abort_blocked = True
+	abort_blocked = True
 
-    # Abort due to either of the above
+# Abort due to either of the above
 if abort_blocked:
-    sys.exit(1)
+	sys.exit(1)
 
+for line in open("/proc/self/mountinfo"):
+	checkr = re.search("/dev/sdb[1-4]", line)
+	if checkr:
+		r_major_minor = line.split(' ')[2]
+		break
+											
+rmajor=int(r_major_minor.split(":")[0])
+rminor=int(r_major_minor.split(":")[1])
+
+for line in open("/proc/self/mountinfo"):
+	checkl = re.search("/dev/sdb[5-9]", line)
+	if checkl:
+		logical_major_minor = line.split(' ')[2]
+		break	
+	
+lmajor = int(logical_major_minor.split(":")[0])
+lminor = int(logical_major_minor.split(":")[1])
+
+
+root_device = ''
+logical_device = ''
+
+for rootdev in glob.glob("/dev/sdb[1-4]*")+glob.glob("/dev/mmcblk*p[1-4]*"):
+	rdev=os.stat(rootdev).st_rdev
+	if os.major(rdev) == rmajor and os.minor(rdev) == rminor:
+		root_device = rootdev
+		print root_device # testing purposes
+	
+		for logdev in glob.glob("/dev/sdb[5-9]*")+glob.glob("/dev/mmcblk*p[5-9]*"):
+			ldev=os.stat(logdev).st_rdev
+			if os.major(ldev) == lmajor and os.minor(ldev) == lminor:
+				logical_device = logdev
+				print logical_device # testing purposes
+				break
+			elif not os.major(ldev) and os.minor(ldev):
+				logical_device = ''
+				break
+
+disk_device = ''
+for pattern in [ '/dev/sdb', '/dev/mmcblk.' ]:
+	match = re.match(pattern, root_device)
+	if match:
+		disk_device = root_device[:match.span()[1]]
+		print "Disk device is %s" % disk_device # testing purposes
+		break
+
+# Exit if no disk_device is found
+if not disk_device:
+	sys.exit(2)
+	
 
 # PHASE 1
 # Resize extended partition to full capacity
 def extendedResize():
-	disk_device = '/dev/sdc' # testing purposes
-	extended = '/dev/sdc2' # testing purposes
+	#disk_device = '/dev/sdb' # testing purposes
+	extended = '/dev/sdb2' # testing purposes
 	device = parted.Device(disk_device)
 	disk = parted.Disk(device)	
 	extended = disk.getPartitionByPath(extended)
@@ -50,8 +100,8 @@ def extendedResize():
 
 # Resize the logical partition to full capacity
 def logicalResize():
-	root_device = '/dev/sdc5'
-	disk_device = '/dev/sdc'
+	#root_device = '/dev/sdb5'
+	#disk_device = '/dev/sdb'
 	device = parted.Device(disk_device)
 	disk = parted.Disk(device)
 	root = disk.getPartitionByPath(root_device)
@@ -61,7 +111,7 @@ def logicalResize():
 	except TypeError:
 		new_end = root.getMaxGeometry(constraint.getPedConstraint()).end
 	
-	fs = ['ext2', 'ext3', 'ext4']
+	fs = ('ext2', 'ext3', 'ext4')
 	if(root.fileSystem.type in fs) and root.geometry.end < new_end:
 	    disk.setPartitionGeometry(partition = root, constraint = constraint, start = root.geometry.start, end = new_end)
 
@@ -77,15 +127,13 @@ def logicalResize():
 	# os.unlink('/.rootfs-repartition')
 	# os.system('/sbin/reboot')
 
-extendedResize()
-logicalResize()
 
 # PHASE 2
 # if /.rootfs-resize exists, resize the filesystem
 def fileSystemResize():
 	# if os.path.isfile('/.rootfs-resize'):
 	# use ionice if available
-	root_device = '/dev/sdc5'
+	root_device = '/dev/sdb5'
 	
 	if os.path.isfile('/usr/bin/ionice'):
 		os.system('/usr/bin/ionice -c2 -n7 /sbin/resize2fs %s' % root_device)
@@ -93,6 +141,6 @@ def fileSystemResize():
 		os.system('/sbin/resize2fs %s' % root_device)
 
 	
+extendedResize()
+logicalResize()
 fileSystemResize()
-
-	
