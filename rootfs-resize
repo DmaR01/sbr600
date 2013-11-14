@@ -102,7 +102,7 @@ if abort_blocked:
 
 # Find the root device
 for line in open("/proc/self/mountinfo"):
-	checkr = re.search("/dev/sdb[1-4]", line)
+	checkr = re.search("/dev/sdc[1-4]", line)
 	if checkr:
 		r_major_minor = line.split(' ')[2]
 		break
@@ -112,7 +112,7 @@ rminor=int(r_major_minor.split(":")[1])
 
 # Find logical device
 for line in open("/proc/self/mountinfo"):
-	checkl = re.search("/dev/sdb[5-9]", line)
+	checkl = re.search("/dev/sdc[5-9]", line)
 	if checkl:
 		logical_major_minor = line.split(' ')[2]
 		break	
@@ -126,13 +126,13 @@ lminor = int(logical_major_minor.split(":")[1])
 # reported in /proc/self/mountinfo may be /dev/root
 root_device = ''
 logical_device = ''
-for rootdev in glob.glob("/dev/sdb[1-4]*")+glob.glob("/dev/mmcblk*p[1-4]*"):
+for rootdev in glob.glob("/dev/sdc[1-4]*")+glob.glob("/dev/mmcblk*p[1-4]*"):
 	rdev=os.stat(rootdev).st_rdev
 	if os.major(rdev) == rmajor and os.minor(rdev) == rminor:
 		root_device = rootdev
 		print root_device # testing purposes
 	
-		for logdev in glob.glob("/dev/sdb[5-9]*")+glob.glob("/dev/mmcblk*p[5-9]*"):
+		for logdev in glob.glob("/dev/sdc[5-9]*")+glob.glob("/dev/mmcblk*p[5-9]*"):
 			ldev=os.stat(logdev).st_rdev
 			if os.major(ldev) == lmajor and os.minor(ldev) == lminor:
 				logical_device = logdev
@@ -145,7 +145,7 @@ for rootdev in glob.glob("/dev/sdb[1-4]*")+glob.glob("/dev/mmcblk*p[1-4]*"):
 
 # If the root device is a partition, find the disk containing it
 disk_device = ''
-for pattern in [ '/dev/sdb', '/dev/mmcblk.' ]:
+for pattern in [ '/dev/sdc', '/dev/mmcblk.' ]:
 	match = re.match(pattern, root_device)
 	if match:
 		disk_device = root_device[:match.span()[1]]
@@ -159,8 +159,9 @@ if not disk_device:
 
 # PHASE 1
 # Resize extended partition to full capacity
-def extendedResize():
-	extended = '/dev/sdb2' # testing purposes
+#if not os.path.isfile('/.rootfs-repartition'):
+if 1 == 1:
+	extended = '/dev/sdc2' # testing purposes
 	device = parted.Device(disk_device)
 	disk = parted.Disk(device)	
 	extended = disk.getPartitionByPath(extended)
@@ -169,20 +170,23 @@ def extendedResize():
 		new_end = extended.getMaxGeometry(constraint).end
 	except TypeError:
 		new_end = extended.getMaxGeometry	(constraint.getPedConstraint()).end
-	
+
 	disk.setPartitionGeometry(partition = extended, constraint = 	constraint, start = extended.geometry.start, end = new_end)
 	try:
 		disk.commit()
 	except:
 		pass
 
-	# change flagfile and reboot
-	# open('/.rootfs-resize', 'w').close()
-	# os.unlink('/.rootfs-repartition')
-	# os.system('/sbin/reboot')
+#--------------------------------------#
+# change flagfile and reboot
+#  open('/.rootfs-resize', 'w').close()
+# os.unlink('/.rootfs-repartition')
+# os.system('/sbin/reboot')
+#--------------------------------------#
 
 # Resize the logical partition to full capacity
-def logicalResize():
+root_device = '/dev/sdc5' # testing purposes
+if 1 == 1:
 	device = parted.Device(disk_device)
 	disk = parted.Disk(device)
 	root = disk.getPartitionByPath(root_device)
@@ -191,11 +195,11 @@ def logicalResize():
 		new_end = root.getMaxGeometry(constraint).end
 	except TypeError:
 		new_end = root.getMaxGeometry(constraint.getPedConstraint()).end
-	
+
 	fs = ('ext2', 'ext3', 'ext4')
 	if(root.fileSystem.type in fs) and root.geometry.end < new_end:
-	    disk.setPartitionGeometry(partition = root, constraint = constraint, start = root.geometry.start, end = new_end)
-
+    		disk.setPartitionGeometry(partition = root, constraint = constraint, start = root.geometry.start, end = new_end)
+	
 	# disk.commit() will usually throw an exception because the kernel is using the rootfs and refuses to accept the new parititon table
 	# ... so we reboot
 	try:
@@ -211,15 +215,11 @@ def logicalResize():
 
 # PHASE 2
 # if /.rootfs-resize exists, resize the filesystem
-def fileSystemResize():
-	# if os.path.isfile('/.rootfs-resize'):
-	# use ionice if available
-	root_device = '/dev/sdb5'
-	
-	if os.path.isfile('/usr/bin/ionice'):
-		os.system('/usr/bin/ionice -c2 -n7 /sbin/resize2fs %s' % root_device)
-	else:
-		os.system('/sbin/resize2fs %s' % root_device)
+# Use ionice if available	
+if os.path.isfile('/usr/bin/ionice'):
+	os.system('/usr/bin/ionice -c2 -n7 /sbin/resize2fs %s' % root_device)
+else:
+	os.system('/sbin/resize2fs %s' % root_device)
 	
 	'''
 	# Create swap is requested
@@ -273,6 +273,3 @@ def fileSystemResize():
 	os.unlink("/.rootfs-resize")
 '''
 
-extendedResize()
-logicalResize()
-fileSystemResize()
