@@ -1,0 +1,189 @@
+#!/usr/bin/python
+import re
+import parted
+import glob
+import os
+import ast
+import sys
+import psutil
+
+abort_blocked = False;
+
+# Check the kernel command line parameter 'nofsresize' was NOT specified
+for line in open('/proc/cmdline'):
+	if 'nofsresize' in line:
+		abort_blocked = True
+
+# Check that /.nofsresize is NOT present
+if os.path.isfile('/.nofsresize'):
+	abort_blocked = True
+
+# Abort due to either of the above
+if abort_blocked:
+	sys.exit(1)
+
+# Find the root device
+for line in open("/proc/self/mountinfo"):
+	if '/ / ' in line:
+		r_major_minor = line.split(' ')[2]
+		break
+											
+rmajor=int(r_major_minor.split(":")[0])
+rminor=int(r_major_minor.split(":")[1])
+
+# We now have the major/minor of both the root and 
+# logical device. Scan devices to find the corresponding
+# block device. This is necessary because the device name
+# reported in /proc/self/mountinfo may be /dev/root
+root_device = ''
+for blockdev in glob.glob("/dev/sd??*")+glob.glob("/dev/mmcblk*p*"):
+	rdev=os.stat(blockdev).st_rdev
+	if os.major(rdev) == rmajor and os.minor(rdev) == rminor:
+	    root_device = blockdev
+	    print root_device # testing purposes
+	    endnum = root_device[-1]
+	    if endnum.isdigit():
+			endnum = int(root_device[-1])
+		if endnum <= 4:
+		    logical = False
+		else:
+		    logical = True
+	else:
+		pass
+
+
+# If the root device is a partition, find the disk containing it
+disk_device = ''
+for pattern in [ '/dev/sd.', '/dev/mmcblk.' ]:
+    match = re.match(pattern, root_device)
+    if match:
+	    disk_device = root_device[:match.span()[1]]
+		print "Disk device is %s" % disk_device # testing purposes
+		break
+
+# Exit if no disk_device is found
+if not disk_device:
+	sys.exit(2)
+	
+# PHASE 1
+# Resize extended partition if found logical
+# if not, resize root partiton only
+if not os.path.isfile('/.rootfs-repartition'):
+    if logical:
+	extended_device = '/dev/mmcblk0p2' # testing purposes
+	device = parted.Device(disk_device)
+	disk = parted.Disk(device)	
+	extended = disk.getPartitionByPath(extended_device)
+	root = disk.getPartitionByPath(root_device)
+	constraint = device.optimalAlignedConstraint
+	try:
+		new_end_ext = extended.getMaxGeometry(constraint).end
+	except TypeError:
+		new_end_ext = extended.getMaxGeometry(constraint.getPedConstraint()).end
+
+	disk.setPartitionGeometry(partition = extended, constraint = constraint, start = extended.geometry.start, end = new_end_ext)
+
+	try:
+		disk.commit()
+	except:
+		pass
+	try:
+		new_end_log = root.getMaxGeometry(constraint).end
+	except TypeError:
+		new_end_log = root.getMaxGeometry(constraint.getPedConstraint()).end
+
+		fs = ('ext2', 'ext3', 'ext4')
+		if(root.fileSystem.type in fs) and root.geometry.end < new_end_log:
+			disk.setPartitionGeometry(partition = root, constraint = constraint, start = extended.geometry.start, end = new_end_log)
+		try:
+			disk.commit()
+		except:
+			pass
+
+	 # change flagfile and reboot
+	 open('/.rootfs-resize', 'w').close()
+	 # os.unlink('/.rootfs-repartition')
+	 os.system('/sbin/reboot')
+
+
+	else:
+        device = parted.Device(disk_device)
+	    disk = parted.Disk(device)
+	    root = disk.getPartitionByPath(root_device)
+	    constraint = device.optimalAlignedConstraint
+	    try:
+			new_end = root.getMaxGeometry(constraint).end
+	    except TypeError:
+			new_end = root.getMaxGeometry(constraint.getPedConstraint()).end
+		
+		fs = ('ext2', 'ext3', 'ext4')
+	    if(root.fileSystem.type in fs) and root.geometry.end < new_end:
+			disk.setPartitionGeometry(partition = root, constraint = constraint, start = root.geometry.start, end = new_end)
+
+		try:
+	            disk.commit()
+		except:
+			    pass
+
+	# change flagfile and reboot
+	open('/.rootfs-resize', 'w').close()
+	# os.unlink('/.rootfs-repartition')
+	os.system('/sbin/reboot')
+
+# PHASE 2
+# if /.rootfs-resize exists, resize the filesystem
+# Use ionice if available	
+if os.path.isfile('/usr/bin/ionice'):
+	os.system('/usr/bin/ionice -c2 -n7 /sbin/resize2fs %s' % root_device)
+else:
+	os.system('/sbin/resize2fs %s' % root_device)
+	
+	# Create swap is requested
+	if os.path.isfile('/.swapsize'):
+	    swapsizefile = open('/.swapsize')
+	    try:
+			swapsize = ast_literal_eval(swapsizefile.readline())
+	    except:
+			swapsize = 0
+
+		swapsizefile.close()
+
+	# Create /swap0 as a swapfile if it doesn't exist
+	# and the requested size in MB is greater than 0
+	if (not os.path.isfile('/swap0') ) and swapsize > 0:
+
+	    # Lower the I/O priority to minimum best-effort
+	    psutil.Process(os.getpid()).set_ionice(psutil.IOPRIO_CLASS_BE, 7)
+
+	    # Create swap file as swap0.part (so we recreate if aborted)
+	    MB = ' ' * (1024*1024)
+	    swapfile = open('/swap0.part', 'w')
+	    for X in range(swapsize):
+	        swapfile.write(MB)
+
+		# Make it a swapfile
+		os.system('/sbin/mkswap /swap0.part')
+
+		# Rename the swapfile to /swap0
+		os.rename('/swap0.part', '/swap0')
+
+	# Add /swap0 to the fstab if not already present
+	abort_fstab = False
+	for line in open("/etc/fstab"):
+            if re.match("/swap0", line):
+	        	abort_fstab = True
+				break
+		if not abort_fstab:
+		    fstab = open("/etc/fstab", "a")
+		    fstab.write("/swap0\t\tswap\tswap\n")
+		    fstab.close()
+
+	    # Active all swap spaces if possible
+	    if os.path.isfile("/sbin/swapon"):
+	        os.system("/sbin/swapon -a")
+
+	    # Delete swap flagfile
+	    os.unlink("/.swapsize")
+	
+    # Delete resize flagfile
+    os.unlink("/.rootfs-resize")
