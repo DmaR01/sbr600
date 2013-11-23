@@ -102,10 +102,10 @@ if abort_blocked:
 
 # Find the root device
 for line in open("/proc/self/mountinfo"):
-		if '/ / ' in line:
-			r_major_minor = line.split(' ')[2]
-			break
-											
+	if '/ / ' in line:
+		r_major_minor = line.split(' ')[2]
+		break
+										
 rmajor=int(r_major_minor.split(":")[0])
 rminor=int(r_major_minor.split(":")[1])
 
@@ -141,7 +141,7 @@ for pattern in [ '/dev/sd.', '/dev/mmcblk.' ]:
 
 # Exit if no disk_device is found
 if not disk_device:
-	#sys.exit(2)
+	sys.exit(2)
 	pass
 
 # PHASE 1
@@ -162,6 +162,9 @@ if not os.path.isfile('/.rootfs-repartition'):
 			new_end_ext = extended.getMaxGeometry(constraint.getPedConstraint()).end
 			new_end_log = root.getMaxGeometry(constraint.getPedConstraint()).end
 	
+	
+		fs = ('ext2', 'ext3', 'ext4')
+		if(root.fileSystem.type in fs) and root.geometry.end < new_end_log and extended.geometry.end < new_end_ext:
 		disk.setPartitionGeometry(partition = extended, constraint = constraint, start = extended.geometry.start, end = new_end_ext)
 		disk.setPartitionGeometry(partition = root, constraint = constraint, start = root.geometry.start, end = new_end_log)
 
@@ -169,6 +172,15 @@ if not os.path.isfile('/.rootfs-repartition'):
 			disk.commit()
 		except:
 			pass
+
+		
+		else:
+			print 'Unable to resize root partition(max size, or unresizable fs type)'
+		
+		# change flagfiles and reboot
+		open('/.rootfs-resize, 'w').close()
+		# os.unlink('/.rootfs-repartition')
+		os.system('/sbin/reboot')	
 
 	else:
 		device = parted.Device(disk_device)
@@ -180,31 +192,21 @@ if not os.path.isfile('/.rootfs-repartition'):
 		except TypeError:
 			new_end = root.getMaxGeometry(constraint.getPedConstraint()).end
 		
-		disk.setPartitionGeometry(partition = root, constraint = constraint, start = root.geometry.start, end = new_end) 
-	
-		try:
-			#disk.commit()
-			pass
-		except:
-			pass
-
 		fs = ('ext2', 'ext3', 'ext4')
 		if(root.fileSystem.type in fs) and root.geometry.end < new_end:
 			disk.setPartitionGeometry(partition = root, constraint = constraint, start = root.geometry.start, end = new_end)
 
 		try:
-			#disk.commit()
+			disk.commit()
 			pass
 
 		except:
 			pass
 
-	#--------------------------------------#
 	# change flagfile and reboot
-	#  open('/.rootfs-resize', 'w').close()
+	open('/.rootfs-resize', 'w').close()
 	# os.unlink('/.rootfs-repartition')
-	# os.system('/sbin/reboot')
-	#--------------------------------------#
+	os.system('/sbin/reboot')
 
 # PHASE 2
 # if /.rootfs-resize exists, resize the filesystem
@@ -214,7 +216,6 @@ if os.path.isfile('/usr/bin/ionice'):
 else:
 	os.system('/sbin/resize2fs %s' % root_device)
 	
-	'''
 	# Create swap is requested
 	if os.path.isfile('/.swapsize'):
 			swapsizefile = open('/.swapsize')
@@ -264,5 +265,3 @@ else:
 	
 	# Delete resize flagfile
 	os.unlink("/.rootfs-resize")
-'''
-
