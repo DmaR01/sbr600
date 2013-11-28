@@ -76,6 +76,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 # MA 02110
 
+
 import re
 import parted
 import glob
@@ -105,8 +106,8 @@ for line in open("/proc/self/mountinfo"):
 		r_major_minor = line.split(' ')[2]
 		break
 											
-rmajor=int(r_major_minor.split(":")[0])
-rminor=int(r_major_minor.split(":")[1])
+major=int(r_major_minor.split(":")[0])
+minor=int(r_major_minor.split(":")[1])
 
 # We now have the major/minor of both the root and 
 # logical device. Scan devices to find the corresponding
@@ -115,21 +116,19 @@ rminor=int(r_major_minor.split(":")[1])
 root_device = ''
 for blockdev in glob.glob("/dev/sd??*")+glob.glob("/dev/mmcblk*p*"):
 	rdev=os.stat(blockdev).st_rdev
-	if os.major(rdev) == rmajor and os.minor(rdev) == rminor:
+	if os.major(rdev) == major and os.minor(rdev) == minor:
 		root_device = blockdev
 		print root_device # testing purposes
 		endnum = root_device[-1]
 		if endnum.isdigit():
 			endnum = int(root_device[-1])
-			if endnum <= 4:
-				logical = False
-				break		
-			else:
-				logical = True
-				break	
+		if endnum <= 4:
+			logical = False
 		else:
-			pass
-
+			logical = True
+	else:
+		break
+		# pass
 
 # If the root device is a partition, find the disk containing it
 disk_device = ''
@@ -147,35 +146,33 @@ if not disk_device:
 # PHASE 1
 # If /.rootfs-repartition exists, repartition the disk, then reboot
 if os.path.isfile('/.rootfs-repartition')::
+	device = parted.Device(disk_device)
+	disk = parted.Disk(device)
+	root = disk.getPartitionByPath(root_device)
+	constraint = device.optimalAlignedConstraint
+	try:
+		new_end_root = root.getMaxGeometry(constraint).end
+	except TypeError:
+		new_end_root = root.getMaxGeometry(constraint.getPedConstraint()).end
+	
 	if logical:
-		extended_device = '/dev/mmcblk0p2' # testing purposes
-		device = parted.Device(disk_device)
-		disk = parted.Disk(device)
-		extended = disk.getPartitionByPath(extended_device)
-		constraint = device.optimalAlignedConstraint
-		try:
-			new_end = extended.getMaxGeometry(constraint).end
-		except TypeError:
-			new_end = extended.getMaxGeometry(constraint.getPedConstraint()).end
-		if extended.geometry.end < new_end:
-			disk.setPartitionGeometry(partition = extended, constraint = constraint, start = extended.geometry.start, end = new_end)
+		if(root.type == 2):
 			try:
-				disk.commit()
+				ext = disk.getExtendedPartition()
+				try:
+					new_end_ext = ext.getMaxGeometry(contraint).end
+				except TypeError:
+					new_end_ext = ext.getMaxGeometry(constraint.getPedConstraint()).end
+
+				if ext.geometry.end < new_end_ext:
+					disk.setPartitionGeometry(partition = root, constraint = constraint, start = ext.geometry.start, end = new_end_ext)
+				else:
+					print 'unable to resize partition'		
 			except:
 				pass
-		else:
-			pass
 	
-		device = parted.Device(disk_device)
-		disk = parted.Disk(device)
-		root = disk.getPartitionByPath(root_device)
-		constraint = device.optimalAlignedConstraint
-		try:
-			new_end_r = root.getMaxGeometry(constraint).end
-		except TypeError:
-			new_end_r = root.getMaxGeometry(constraint.getPedConstraint()).end
-		if(root.fileSystem.type == 'ext2' or root.fileSystem.type == 'ext3' or root.fileSystem.type == 'ext4') and root.geometry.end < new_end_r:
-			disk.setPartitionGeometry(partition = root, constraint = constraint, start = root.geometry.start, end = new_end_r)
+		if(root.fileSystem.type == 'ext2' or root.fileSystem.type == 'ext3' or root.fileSystem.type == 'ext4') and root.geometry.end < new_end_root:
+			disk.setPartitionGeometry(partition = root, constraint = constraint, start = root.geometry.start, end = new_end_root)
 			try:
 				disk.commit()
 			except:
