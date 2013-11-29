@@ -123,12 +123,12 @@ for blockdev in glob.glob("/dev/sd??*")+glob.glob("/dev/mmcblk*p*"):
 		endnum = root_device[-1]
 		if endnum.isdigit():
 			endnum = int(root_device[-1])
-		if endnum <= 4:
-			logical = False
+			if endnum <= 4:
+				logical = False
+			else:
+				logical = True
 		else:
-			logical = True
-	else:
-		break
+			break
 		
 # If the root device is a partition, find the disk containing it
 disk_device = ''
