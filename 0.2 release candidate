@@ -1,5 +1,4 @@
 #!/usr/bin/python
-#!/usr/bin/python
 #
 # rootfs-resize :: Resize the root/extended partition, and filesystem.
 #
