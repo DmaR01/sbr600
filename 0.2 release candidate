@@ -125,8 +125,10 @@ for blockdev in glob.glob("/dev/sd??*")+glob.glob("/dev/mmcblk*p*"):
 			endnum = int(root_device[-1])
 			if endnum <= 4:
 				logical = False
+				break
 			else:
 				logical = True
+				break
 		else:
 			break
 		
