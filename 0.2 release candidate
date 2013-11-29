@@ -196,7 +196,11 @@ if os.path.isfile('/.rootfs-repartition')::
 
 	# If root is an ext[234] filesystem and the partition end can grow,
         # change the partition ending and then reboot
-	if(root.fileSystem.type == 'ext2' or root.fileSystem.type == 'ext3' or root.fileSystem.type == 'ext4') and root.geometry.end < new_end_root:
+	if (root.fileSystem.type == 'ext2'
+        or root.fileSystem.type == 'ext3'
+        or root.fileSystem.type == 'ext4' ) \
+        and root.geometry.end < new_end_root:
+		
 		disk.setPartitionGeometry(partition = root, constraint = constraint, start = root.geometry.start, end = new_end_root)
 		
 		# disk.commit() will usually throw an exception because the kernel
